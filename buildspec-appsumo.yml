@@ -1,0 +1,30 @@
+# AppSumo build of phpLDAPadmin (CodeBuild project `phpldapadmin`, ARM_CONTAINER).
+# Image runs on appsumo2-staging-graviton (arm64). Deploy = pin the pushed tag in
+# pulumi-infrastructure src/dmz/applications/ldap/live.yaml and `pulumi up`.
+version: 0.2
+
+env:
+  variables:
+    APP_VERSION: "2.3.11"   # upstream tag this branch is cut from (VERSION file holds a placeholder)
+    EXPECT_PHP: "8.4.27"
+
+phases:
+  pre_build:
+    commands:
+      - aws ecr get-login-password --region "$AWS_DEFAULT_REGION" | docker login --username AWS --password-stdin "$ECR"
+      - export SHORT_SHA=$(echo "${CODEBUILD_RESOLVED_SOURCE_VERSION}" | cut -c1-8)
+      - test -n "$SHORT_SHA" && test -n "$APP_VERSION"
+      - export TAG="${APP_VERSION}-${SHORT_SHA}"
+      - echo "Building ${REPOSITORY_URI}:${TAG}"
+  build:
+    commands:
+      - docker build -f docker/Dockerfile --build-arg BUILD_VERSION="$TAG" --build-arg BUILD_REVISION="$CODEBUILD_RESOLVED_SOURCE_VERSION" -t "${REPOSITORY_URI}:${TAG}" .
+      # The image must prove the patch is in it, or the build fails.
+      - docker run --rm -e EXPECT_PHP="$EXPECT_PHP" --entrypoint php "${REPOSITORY_URI}:${TAG}" -r 'if (PHP_VERSION !== getenv("EXPECT_PHP")) { fwrite(STDERR, "PHP ".PHP_VERSION." != ".getenv("EXPECT_PHP")."\n"); exit(3); }'
+      - docker run --rm --entrypoint php "${REPOSITORY_URI}:${TAG}" -r 'if (ini_get("session.upload_progress.enabled")) { fwrite(STDERR, "session.upload_progress.enabled is On\n"); exit(4); }'
+      - docker run --rm --entrypoint php "${REPOSITORY_URI}:${TAG}" -r 'foreach (["ldap","xpass"] as $e) if (!extension_loaded($e)) { fwrite(STDERR, "missing ext $e\n"); exit(5); }'
+  post_build:
+    commands:
+      - test "$CODEBUILD_BUILD_SUCCEEDING" = "1"
+      - docker push "${REPOSITORY_URI}:${TAG}"
+      - echo "PUSHED ${REPOSITORY_URI}:${TAG}"

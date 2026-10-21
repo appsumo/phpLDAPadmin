@@ -1,4 +1,4 @@
-FROM dunglas/frankenphp:php8.4-alpine AS base
+FROM dunglas/frankenphp:1.13.2-php8.4.27-alpine AS base
 RUN apk --no-cache upgrade && apk --no-cache del libcap mailcap tar && apk add --no-cache bash
 
 FROM scratch
@@ -46,6 +46,9 @@ RUN cp ${PHP_INI_DIR}/php.ini-production ${PHP_INI_DIR}/php.ini \
 	&& sed -i -e 's/^expose_php = On/expose_php = Off/' ${PHP_INI_DIR}/php.ini
 
 COPY docker/opcache.ini ${PHP_INI_DIR}/conf.d/docker-php-ext-opcache.ini
+
+# php2shell (CVE-2026-109618/-109619) defence in depth: disable upload progress tracking
+RUN printf 'session.upload_progress.enabled = 0\n' > ${PHP_INI_DIR}/conf.d/zz-php2shell.ini
 
 # Support for LDAPS queries
 RUN echo "TLS_REQCERT never" >> /etc/openldap/ldap.conf

@@ -9,6 +9,9 @@ env:
     EXPECT_PHP: "8.4.27"
 
 phases:
+  install:
+    runtime-versions:
+      nodejs: 20
   pre_build:
     commands:
       - aws ecr get-login-password --region "$AWS_DEFAULT_REGION" | docker login --username AWS --password-stdin "$ECR"
@@ -18,10 +21,15 @@ phases:
       - echo "Building ${REPOSITORY_URI}:${TAG}"
   build:
     commands:
+      # css/js/fonts are gitignored laravel-mix output that upstream CI builds before
+      # `docker build`; without this the image serves 404 for css/app.css and js/*.js.
+      - npm ci --no-audit --no-fund
+      - npm run prod
       - docker build -f docker/Dockerfile --build-arg BUILD_VERSION="$TAG" --build-arg BUILD_REVISION="$CODEBUILD_RESOLVED_SOURCE_VERSION" -t "${REPOSITORY_URI}:${TAG}" .
       # The image must prove the patch is in it, or the build fails.
       - docker run --rm -e EXPECT_PHP="$EXPECT_PHP" --entrypoint php "${REPOSITORY_URI}:${TAG}" -r 'if (PHP_VERSION !== getenv("EXPECT_PHP")) { fwrite(STDERR, "PHP ".PHP_VERSION." != ".getenv("EXPECT_PHP")."\n"); exit(3); }'
       - docker run --rm --entrypoint php "${REPOSITORY_URI}:${TAG}" -r 'if (ini_get("session.upload_progress.enabled")) { fwrite(STDERR, "session.upload_progress.enabled is On\n"); exit(4); }'
+      - docker run --rm --entrypoint sh "${REPOSITORY_URI}:${TAG}" -c 'for f in public/css/app.css public/js/app.js public/js/vendor.js public/js/manifest.js; do test -s "$f" || { echo "missing asset $f" >&2; exit 6; }; done'
       - docker run --rm --entrypoint php "${REPOSITORY_URI}:${TAG}" -r 'foreach (["ldap","xpass"] as $e) if (!extension_loaded($e)) { fwrite(STDERR, "missing ext $e\n"); exit(5); }'
   post_build:
     commands:
